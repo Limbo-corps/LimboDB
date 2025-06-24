@@ -51,13 +51,20 @@ private:
     void remove_from_leaf(LeafNode* leaf, const Key& key, const Value& value);
     void merge_or_redistribute(Node* node);
 
+    int min_keys() const;
+    int find_child_index(InternalNode* parent, Node* child);
+    void merge_nodes(Node* left, Node* right, InternalNode* parent, int separator_idx);
+    void redistribute_from_left(Node* node, Node* left_sibling, InternalNode* parent, int node_idx);
+    void redistribute_from_right(Node* node, Node* right_sibling, InternalNode* parent, int node_idx);
+    void remove_key_from_parent(InternalNode* parent, const Key& key);
+
 public:
     BPlusTree();
     ~BPlusTree();
 
     void insert(const Key& key, const Value& value);
     void remove(const Key& key, const Value& value);
-    vector<Value> search(const Key& key);
-    vector<Value> range_search(const Key& start_key, const Key& end_key);
+    std::vector<Value> search(const Key& key);
+    std::vector<Value> range_search(const Key& start_key, const Key& end_key);
     bool empty() const {return root == nullptr; }   
 };
