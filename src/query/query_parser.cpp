@@ -23,10 +23,10 @@ bool QueryParser::execute_query(const std::string& query) {
         return parse_delete(query);
     } else if (q.find("update") == 0) {
         return parse_update(query);
+    } else if (q.find("select * from") == 0) {
+        return parse_print_table(query);
     } else if (q.find("select") == 0) {
         return parse_select(query);
-    } else if (q.find("print table") == 0) {
-        return parse_print_table(query);
     }
 
     cout << "[ERROR] Unsupported or invalid query." << endl;
@@ -501,10 +501,10 @@ bool QueryParser::parse_print_table(const std::string& query) {
     std::transform(q.begin(), q.end(), q.begin(), ::tolower);
     
     // Extract table name
-    size_t pos = q.find("print table");
+    size_t pos = q.find("select * from ");
     if (pos == std::string::npos) return false;
     
-    std::string tableName = query.substr(pos + 11); // "print table" is 11 chars
+    std::string tableName = query.substr(pos + 13); // "print table" is 11 chars
     trim(tableName);
     
     // Remove trailing semicolon
