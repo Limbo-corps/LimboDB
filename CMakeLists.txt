@@ -20,6 +20,7 @@ set(SOURCES
     src/index_manager.cpp
     src/query/query_parser.cpp
     external/pretty/pretty.cpp   # Implementation
+    # src/btree.cpp
 )
 
 # Executable
