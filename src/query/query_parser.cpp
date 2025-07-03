@@ -2,6 +2,7 @@
 #include <sstream>
 #include <iostream>
 #include <algorithm>
+#include "../../include/record_manager.h"
 
 using namespace std;
 
@@ -58,56 +59,100 @@ vector<string> QueryParser::split(const string& s, char delimiter) {
 
 bool QueryParser::parse_create_table(const std::string& query) {
     std::string query_lower = query;
-    std::transform(query_lower.begin(), query_lower.end(), query_lower.begin(), ::tolower);
+    transform(query_lower.begin(), query_lower.end(), query_lower.begin(), ::tolower);
 
-    size_t pos1 = query_lower.find("table");
-    if (pos1 == std::string::npos) {
+    size_t start = query_lower.find("table");
+    if (start == std::string::npos) {
         cout << "[ERROR] Syntax error in CREATE TABLE." << endl;
         return false;
     }
 
-    // Use pos1 to slice the original query to preserve case
-    std::string after_table = query.substr(pos1 + 5);
-    trim(after_table);
+    size_t open_paren = query.find('(', start);
+    size_t close_paren = query.find_last_of(')');
 
-    size_t pos_paren_open = after_table.find('(');
-    size_t pos_paren_close = after_table.find(')');
-
-    if (pos_paren_open == std::string::npos || pos_paren_close == std::string::npos || pos_paren_close < pos_paren_open) {
-        cout << "[ERROR] Syntax error: missing parentheses in CREATE TABLE." << endl;
+    if(open_paren == std::string::npos && close_paren == std::string::npos){
+        cout<<"[ERROR] Invalid syntax: expected column definition list in parentheses." << endl;
         return false;
     }
 
-    std::string table_name = after_table.substr(0, pos_paren_open);
+    std::string table_name = query.substr(start + 5, open_paren - (start + 5));
     trim(table_name);
 
-    std::string cols_str = after_table.substr(pos_paren_open + 1, pos_paren_close - pos_paren_open - 1);
+    string columns_str = query.substr(open_paren + 1, close_paren - open_paren - 1);
+    cout<< "[DEBUG] columns str: "<< columns_str<<endl;
+    vector<string> column_defs = split(columns_str, ',');
+    vector<string> columns;
+    vector<DataType> types;
+    string primary_key_name;
 
-    // Remove trailing semicolon if present
-    if (!cols_str.empty() && cols_str.back() == ';') {
-        cols_str.pop_back();
+    for(auto& col_def : column_defs){
+        trim(col_def);
+        string col_def_lower = col_def;
+        std::transform(col_def_lower.begin(), col_def_lower.end(), col_def_lower.begin(), ::tolower);
+
+        if(col_def_lower.rfind("primary key", 0) == 0){
+            size_t pk_start = col_def.find('(');
+            size_t pk_end = col_def.find(')');
+            if(pk_start == string::npos || pk_end == string::npos || pk_end <= pk_start + 1){
+                cout<<"[ERROR] Invalid PRIMARY KEY syntax."<<endl;
+                return false;
+            }
+
+            primary_key_name = col_def.substr(pk_start + 1, pk_end - pk_start - 1);
+            trim(primary_key_name);
+            continue;
+        }
+
+        auto parts = split(col_def, ' ');
+        if(parts.size() != 2){
+            cout<< "[ERROR] Invalid column definition: "<<col_def<<endl;
+            return false;
+        }
+
+        string col_name = parts[0];
+        cout<<"[DEBUG] Column name: " << col_name<<endl;
+        string type_name = parts[1];
+        cout<<"[DEBUG] Type name: " << type_name<<endl;
+
+        std::transform(type_name.begin(), type_name.end(), type_name.begin(), ::toupper);
+
+        DataType type = parse_type(type_name);
+        if(type == DataType::UNKNOWN){
+            cout<<"[ERROR] Unsupported type: " << type_name << endl;
+            return false;
+        }
+
+        columns.push_back(col_name);
+        types.push_back(type);
     }
 
-    vector<string> columns = split(cols_str, ',');
-    if (columns.empty()) {
-        cout << "[ERROR] No columns specified for CREATE TABLE." << endl;
+    //Finding the index of the primary key
+    if(primary_key_name.empty()){
+        cout<<"[ERROR] PRIMARY KEY must be specified."<<endl;
         return false;
     }
 
-    bool success = catalog_manager.create_table(table_name, columns);
-    if (success) {
-        cout << "[INFO] Table '" << table_name << "' created." << endl;
-    } else {
-        cout << "[ERROR] Table creation failed. Table may already exist." << endl;
+    int pk_idx = -1;
+    for(size_t i = 0; i < columns.size(); i++){
+        if(columns[i] == primary_key_name){
+            pk_idx = static_cast<int>(i);
+            break;
+        }
     }
-    return success;
+
+    if(pk_idx == -1){
+        cout<< "[ERROR] PRIMARY KEY column '" << primary_key_name << "' not found in the column list." << endl;
+        return false;
+    }
+
+    //Call Catalog Manager to create the table
+    return table_manager.create_table(table_name, columns, types, pk_idx);
 }
 
 
 bool QueryParser::parse_drop_table(const std::string& query) {
-    // Expected format: DROP TABLE table_name;
     std::string query_lower = query;
-    std::transform(query_lower.begin(), query_lower.end(), query_lower.begin(), ::tolower);
+    transform(query_lower.begin(), query_lower.end(), query_lower.begin(), ::tolower);
 
     size_t pos1 = query_lower.find("table");
     if (pos1 == string::npos) {
@@ -118,7 +163,6 @@ bool QueryParser::parse_drop_table(const std::string& query) {
     trim(after_table);
 
     string table_name = after_table;
-    // Remove trailing semicolon if exists
     if (!table_name.empty() && table_name.back() == ';') {
         table_name.pop_back();
         trim(table_name);
@@ -134,10 +178,8 @@ bool QueryParser::parse_drop_table(const std::string& query) {
 }
 
 bool QueryParser::parse_insert(const std::string& query) {
-    // Expected format:
-    // INSERT INTO table_name [(col1, col2, ...)] VALUES (val1, val2, ...);
     std::string query_lower = query;
-    std::transform(query_lower.begin(), query_lower.end(), query_lower.begin(), ::tolower);
+    transform(query_lower.begin(), query_lower.end(), query_lower.begin(), ::tolower);
 
     size_t pos_into = query_lower.find("into");
     if (pos_into == string::npos) {
@@ -153,7 +195,6 @@ bool QueryParser::parse_insert(const std::string& query) {
         return false;
     }
 
-    // Extract table name and optional column list
     string table_and_cols = after_into.substr(0, pos_values);
     trim(table_and_cols);
 
@@ -162,13 +203,11 @@ bool QueryParser::parse_insert(const std::string& query) {
     size_t paren_open = table_and_cols.find('(');
     size_t paren_close = table_and_cols.find(')');
     if (paren_open != string::npos && paren_close != string::npos && paren_close > paren_open) {
-        // There is a column list
         table_name = table_and_cols.substr(0, paren_open);
         trim(table_name);
         string cols_str = table_and_cols.substr(paren_open + 1, paren_close - paren_open - 1);
         column_list = split(cols_str, ',');
     } else {
-        // No column list
         table_name = table_and_cols;
         trim(table_name);
     }
@@ -181,7 +220,6 @@ bool QueryParser::parse_insert(const std::string& query) {
         return false;
     }
 
-    // remove trailing ';' if exists
     if (after_values.back() == ';') {
         after_values.pop_back();
     }
@@ -192,15 +230,12 @@ bool QueryParser::parse_insert(const std::string& query) {
 
     vector<string> values = split(after_values, ',');
 
-    // If column_list is empty, assume all columns in schema order
-    // Otherwise, reorder values to match schema order
     if (!column_list.empty()) {
         auto schema = catalog_manager.get_schema(table_name);
         if (schema.columns.size() != values.size() || column_list.size() != values.size()) {
             cout << "[ERROR] Number of columns and values do not match." << endl;
             return false;
         }
-        // Map column_list to schema order
         vector<string> reordered_values(schema.columns.size());
         for (size_t i = 0; i < column_list.size(); ++i) {
             string col = column_list[i];
@@ -227,10 +262,8 @@ bool QueryParser::parse_insert(const std::string& query) {
 }
 
 bool QueryParser::parse_delete(const std::string& query) {
-    // Expected format:
-    // DELETE FROM table_name WHERE record_id = some_id;
     std::string query_lower = query;
-    std::transform(query_lower.begin(), query_lower.end(), query_lower.begin(), ::tolower);
+    transform(query_lower.begin(), query_lower.end(), query_lower.begin(), ::tolower);
 
     size_t pos_from = query_lower.find("from");
     if (pos_from == string::npos) {
@@ -251,7 +284,6 @@ bool QueryParser::parse_delete(const std::string& query) {
     string where_clause = after_from.substr(pos_where + 5);
     trim(where_clause);
 
-    // Currently support only WHERE record_id = <id>
     string prefix = "record_id =";
     if (where_clause.find(prefix) != 0) {
         cout << "[ERROR] DELETE only supports WHERE record_id = <id> for now." << endl;
@@ -260,7 +292,6 @@ bool QueryParser::parse_delete(const std::string& query) {
     string id_str = where_clause.substr(prefix.size());
     trim(id_str);
 
-    // remove trailing ';' if any
     if (!id_str.empty() && id_str.back() == ';') {
         id_str.pop_back();
     }
@@ -277,108 +308,122 @@ bool QueryParser::parse_delete(const std::string& query) {
 }
 
 bool QueryParser::parse_update(const std::string& query) {
-    // Expected format:
-    // UPDATE table_name SET col1 = val1, col2 = val2 WHERE record_id = some_id;
-    std::string query_lower = query;
-    std::transform(query_lower.begin(), query_lower.end(), query_lower.begin(), ::tolower);
-
+    //UPDATE users SET name = 'Alice', age = 30 WHERE id = 1;
+    string query_lower = query;
+    transform(query_lower.begin(), query_lower.end(), query_lower.begin(), ::tolower);
+    
     size_t pos_set = query_lower.find("set");
-    if (pos_set == string::npos) {
-        cout << "[ERROR] Syntax error in UPDATE: missing SET." << endl;
+    if(pos_set == string::npos){
+        cout<<"[ERROR] Syntax Error: missing SET"<<endl;
         return false;
     }
-    string before_set = query.substr(6, pos_set - 6); // 6 is length of "update"
-    trim(before_set);
-    string table_name = before_set;
 
     size_t pos_where = query_lower.find("where");
-    if (pos_where == string::npos) {
-        cout << "[ERROR] UPDATE requires WHERE clause." << endl;
+    if(pos_where == string::npos){
+        cout<<"[ERROR] UPDATE requires a WHERE clause."<<endl;
         return false;
     }
+
+    string table_name = query.substr(6, pos_set - 6);
+    trim(table_name);
+
     string set_clause = query.substr(pos_set + 3, pos_where - (pos_set + 3));
     trim(set_clause);
 
     string where_clause = query.substr(pos_where + 5);
     trim(where_clause);
+    if(!where_clause.empty() && where_clause.back() == ';') where_clause.pop_back();
 
-    // parse record_id from WHERE clause (support only record_id = <id>)
-    string prefix = "record_id =";
-    if (where_clause.find(prefix) != 0) {
-        cout << "[ERROR] UPDATE only supports WHERE record_id = <id> for now." << endl;
+    size_t eq_pos = where_clause.find('=');
+    if(eq_pos == string::npos){
+        cout<<"[ERROR] Invalid WHERE clause."<<endl;
         return false;
     }
-    string id_str = where_clause.substr(prefix.size());
-    trim(id_str);
-    if (!id_str.empty() && id_str.back() == ';') {
-        id_str.pop_back();
-    }
-    int record_id = stoi(id_str);
+    string where_col = where_clause.substr(0, eq_pos);
+    string where_val = where_clause.substr(eq_pos + 1);
+    trim(where_col);
+    trim(where_val);
 
-    // parse set clause: col1=val1, col2=val2
-    vector<string> assignments = split(set_clause, ',');
-    if (assignments.empty()) {
-        cout << "[ERROR] No assignments in SET clause." << endl;
-        return false;
+    //validate table and column
+    TableSchema schema = catalog_manager.get_schema(table_name);
+    cout << "[INFO] Columns in table '" << table_name << "': ";
+    for (const auto& col : schema.columns) {
+        cout << col << " ";
     }
-
-    // fetch current record and schema
-    auto schema = catalog_manager.get_schema(table_name);
+    cout << endl;
     if (schema.columns.empty()) {
-        cout << "[ERROR] Table '" << table_name << "' does not exist." << endl;
+        cout << "[ERROR] Table " << table_name << " does not exist." << endl;
         return false;
     }
 
-    // Get the current record data as vector<string>
-    Record rec = table_manager.select(table_name, record_id);
-    vector<string> current_record;
-    for (const auto& c : rec.data) {
-        current_record.push_back(string(1, c));
-    }
-    if (current_record.empty()) {
-        cout << "[ERROR] Record ID " << record_id << " not found." << endl;
+    auto where_it = find(schema.columns.begin(), schema.columns.end(), where_col);
+    if(where_it == schema.columns.end()){
+        cout<<"[ERROR] Column '"<< where_col <<"' not found in table '" << table_name <<"'."<<endl;
         return false;
     }
 
-    // update fields
-    for (const string& assign : assignments) {
-        size_t eq_pos = assign.find('=');
-        if (eq_pos == string::npos) {
-            cout << "[ERROR] Invalid assignment: " << assign << endl;
-            return false;
-        }
-        string col = assign.substr(0, eq_pos);
-        string val = assign.substr(eq_pos + 1);
-        trim(col);
-        trim(val);
+    int where_col_idx = distance(schema.columns.begin(), where_it);
+    vector<int> matching_ids = index_manager.search(table_name, where_col, where_val);
 
-        // find index of column in schema
-        auto it = find(schema.columns.begin(), schema.columns.end(), col);
-        if (it == schema.columns.end()) {
-            cout << "[ERROR] Column '" << col << "' not found in table '" << table_name << "'." << endl;
-            return false;
-        }
-        int col_idx = distance(schema.columns.begin(), it);
-        current_record[col_idx] = val;
+    //Parse SET assignments
+    vector<string> assignments = split(set_clause, ',');
+    if(assignments.empty()){
+        cout<<"[ERROR] No assignments in SET clause."<<endl;
+        return false;
     }
 
-    // update record in table
-    bool success = table_manager.update(table_name, record_id, current_record);
-    if (success) {
-        cout << "[INFO] Record updated successfully." << endl;
-    } else {
-        cout << "[ERROR] Update failed." << endl;
+    //apply changes
+    bool any_success = false;
+    for(int record_id : matching_ids){
+        Record rec = table_manager.select(table_name, record_id);
+        if(rec.data.empty()){
+            cout<< "[WARNING] Skipping invalid RecordID: "<<record_id <<endl;
+            continue;
+        }
+
+        vector<string> current_record = table_manager.unpack_record(rec, schema);
+
+        for(const string& assign : assignments){
+            size_t eq_pos = assign.find("=");
+
+            if(eq_pos == string::npos){
+                cout<<"[ERROR] Invalid assignment: "<< assign << endl;
+                return false;
+            }
+
+            string col = assign.substr(0, eq_pos);
+            string val = assign.substr(eq_pos + 1);
+            trim(col);
+            trim(val);
+
+            auto it = find(schema.columns.begin(), schema.columns.end(), col);
+            if(it == schema.columns.end()){
+                cout<<"[ERROR] Column '"<< col << "' not found in table '" << table_name << "'." << endl;
+                return false;
+            }
+
+            int col_idx = distance(schema.columns.begin(), it);
+            current_record[col_idx] = val;
+        }
+
+        if(table_manager.update(table_name, record_id, current_record)){
+            any_success = true;
+            cout<< "[INFO] Record " << record_id << " updated." << endl;
+        } else {
+            cout << "[ERROR] Failed to update record ID " << record_id << "." << endl;
+        }
     }
-    return success;
+
+    if(!any_success){
+        cout << "[INFO] No matching records were updated." << endl;
+    }
+
+    return any_success;
 }
 
 bool QueryParser::parse_select(const std::string& query) {
-    // Support only:
-    // SELECT * FROM table_name WHERE record_id = some_id;
-    // or
-    // SELECT * FROM table_name;
     std::string query_lower = query;
-    std::transform(query_lower.begin(), query_lower.end(), query_lower.begin(), ::tolower);
+    transform(query_lower.begin(), query_lower.end(), query_lower.begin(), ::tolower);
 
     size_t pos_from = query_lower.find("from");
     if (pos_from == string::npos) {
@@ -389,14 +434,11 @@ bool QueryParser::parse_select(const std::string& query) {
     string after_from = query.substr(pos_from + 4);
     trim(after_from);
 
-    // Check for WHERE clause
     size_t pos_where = query_lower.substr(pos_from + 4).find("where");
     string table_name;
     string where_clause;
     if (pos_where == string::npos) {
-        // No WHERE, select all
         table_name = after_from;
-        // Remove trailing semicolon if exists
         if (!table_name.empty() && table_name.back() == ';') {
             table_name.pop_back();
         }
@@ -408,14 +450,12 @@ bool QueryParser::parse_select(const std::string& query) {
             return true;
         }
 
-        // Print header
         auto schema = catalog_manager.get_schema(table_name);
         for (const auto& col : schema.columns) {
             cout << col << "\t";
         }
         cout << endl;
 
-        // Print rows
         for (const auto& rec : records) {
             string rec_str(rec.data.begin(), rec.data.end());
             vector<string> row = split(rec_str, '|');
@@ -431,12 +471,10 @@ bool QueryParser::parse_select(const std::string& query) {
         where_clause = after_from.substr(pos_where + 5);
         trim(where_clause);
 
-        // Remove trailing semicolon if any
         if (!where_clause.empty() && where_clause.back() == ';') {
             where_clause.pop_back();
         }
 
-        // Only support WHERE record_id = <id>
         string prefix = "record_id =";
         if (where_clause.find(prefix) != 0) {
             cout << "[ERROR] SELECT only supports WHERE record_id = <id> for now." << endl;
@@ -457,13 +495,11 @@ bool QueryParser::parse_select(const std::string& query) {
         }
 
         auto schema = catalog_manager.get_schema(table_name);
-        // Print header
         for (const auto& col : schema.columns) {
             cout << col << "\t";
         }
         cout << endl;
 
-        // Print record
         for (const auto& val : record) {
             cout << val << "\t";
         }
@@ -498,16 +534,14 @@ void QueryParser::run_interactive() {
 
 bool QueryParser::parse_print_table(const std::string& query) {
     std::string q = query;
-    std::transform(q.begin(), q.end(), q.begin(), ::tolower);
+    transform(q.begin(), q.end(), q.begin(), ::tolower);
     
-    // Extract table name
     size_t pos = q.find("select * from ");
     if (pos == std::string::npos) return false;
     
-    std::string tableName = query.substr(pos + 13); // "print table" is 11 chars
+    std::string tableName = query.substr(pos + 13);
     trim(tableName);
     
-    // Remove trailing semicolon
     if (!tableName.empty() && tableName.back() == ';') {
         tableName.pop_back();
     }

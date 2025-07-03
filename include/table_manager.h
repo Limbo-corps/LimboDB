@@ -17,10 +17,15 @@ private:
 public:
     TableManager(CatalogManager& cat, RecordManager& rm, IndexManager& im);
 
+    bool create_table(const string& table_name, const vector<string>& columns, const vector<DataType>& types, int primary_key_idx);
+    
     int insert_into(const string& table_name, const vector<string>& values);
     bool delete_from(const string& table_name, int record_id);
     bool update(const string& table_name, int record_id, const vector<string>& new_values);
     Record select(const string& table_name, int record_id);
     vector<Record> scan(const string& table_name); // optional: full scan
     void printTable(const std::string& tableName);
+
+
+    std::vector<string> unpack_record(const Record& rec, const TableSchema& schema);
 };

@@ -6,8 +6,12 @@ using namespace std;
 
 #define DEBUG_INDEX_MANAGER(msg) cout << "[DEBUG][INDEX_MANAGER] " << msg << endl;
 
+IndexManager::IndexManager() {
+    load_indexes();
+}
 // Destructor to clean up B+ trees
 IndexManager::~IndexManager() {
+    save_indexes();
     for (auto& table : indexes) {
         for (auto& column : table.second) {
             delete column.second;
@@ -181,4 +185,78 @@ vector<int> IndexManager::range_search(const string& table_name, const string& c
     
     DEBUG_INDEX_MANAGER("Range search found " << result.size() << " record(s)");
     return result;
+}
+
+void IndexManager::save_indexes() {
+    DEBUG_INDEX_MANAGER("Saving indexes to disk...");
+
+    fs::create_directory("indexes");
+
+    for(const auto& [table_name, columns] : indexes){
+        for(const auto& [column_name, btree] : columns){
+            string filename = "indexes/" + table_name + "_" + column_name + ".idx";
+            ofstream out(filename);
+
+            if (!out.is_open()) {
+                cerr << "[ERROR] Could not open " << filename << " for writing." << endl;
+                continue;
+            }
+
+            auto leaf = btree->get_leftmost_leaf();
+            while(leaf){
+                for(size_t i = 0; i < leaf->keys.size(); ++i){
+                    out<< leaf->keys[i] << "|";
+                    for(auto it = leaf->values[i].begin(); it != leaf->values[i].end(); ++it){
+                        if(it != leaf->values[i].begin()) out<< ",";
+                        out<<*it;
+                    }
+                    out<<"\n";
+                }
+                leaf = leaf->next;
+            }
+
+            out.close();
+            DEBUG_INDEX_MANAGER("Saved index " << filename);
+        }
+    }
+}
+
+void IndexManager::load_indexes(){
+    DEBUG_INDEX_MANAGER("Loading Indexes from the disk...");
+
+    if(!fs::exists("indexes")) return;
+
+    for(const auto& entry : fs::directory_iterator("indexes")){
+        string filename = entry.path().filename().string();
+        if(filename.size() >= 4 && filename.compare(filename.size() - 4, 4, ".idx") == 0){
+            string name = filename.substr(0, filename.size() - 4);
+            size_t pos = name.find('_');
+
+            string table = name.substr(0, pos);
+            string column = name.substr(pos + 1);
+
+            BPlusTree<string, set<int>>* tree = new BPlusTree<string, set<int>>();
+            ifstream in(entry.path());
+            string line;
+            while (getline(in, line)) {
+                size_t sep = line.find('|');
+                if (sep == string::npos) continue;
+
+                string key = line.substr(0, sep);
+                string ids_str = line.substr(sep + 1);
+                set<int> ids;
+
+                stringstream ss(ids_str);
+                string id;
+                while (getline(ss, id, ',')) {
+                    ids.insert(stoi(id));
+                }
+
+                tree->insert(key, ids);
+            }
+
+            indexes[table][column] = tree;
+            DEBUG_INDEX_MANAGER("Loaded index: " << table << "." << column);
+        }
+    }
 }

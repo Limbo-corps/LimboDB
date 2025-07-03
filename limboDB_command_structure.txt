@@ -4,13 +4,26 @@ limboDB Command Reference
 
 CREATE TABLE
 Syntax:
-  CREATE TABLE <table_name> (<column1>, <column2>, ..., <columnN>);
+  CREATE TABLE <table_name> (
+        <column1> <column1_datatype>, 
+        <column2> <column2_datatype>, 
+        ..., 
+        <columnN> <columnN_datatype>, 
+        PRIMARY KEY(<column>));
+  
+  datatypes available:
+    INT, VARCHAR, FLOAT
 
 
 Description:
   Creates a new table with the specified columns.
 Example:
-  CREATE TABLE users (username, email, age);
+  CREATE TABLE users (
+      id INT, 
+      username VARCHAR, 
+      email VARCHAR, 
+      age INT, 
+      PRIMARY KEY (id));
 
 ------------------------
 
@@ -54,13 +67,13 @@ Example:
 
 UPDATE
 Syntax:
-  UPDATE <table_name> SET <column1> = value1, <column2> = value2 WHERE record_id = <some_id>;
+  UPDATE <table_name> SET <column1> = value1, <column2> = value2 WHERE <column_name> = <some_value>;
 
 
 Description:
   Updates specified columns for a record identified by record_id.
 Example:
-  UPDATE users SET age = 31, email = 'alice_new@email.com' WHERE record_id = 1;
+  UPDATE users SET age = 31, email = 'alice_new@email.com' WHERE id = 1;
 
 ------------------------
 
@@ -74,20 +87,8 @@ Syntax:
 
 Example:
   SELECT * FROM users;
-  SELECT * FROM users WHERE record_id = 2;
+  SELECT * FROM users WHERE id = 2;
 
-------------------------
-
-PRINT TABLE
-Syntax:
-  PRINT TABLE <table_name>;
-
-
-Description:
-  Prints all records from the specified table in a formatted tabular view.
-Example:
-  PRINT TABLE users;
-git push
 ------------------------
 
 EXIT / QUIT

@@ -10,6 +10,7 @@
 #include <numeric>
 #include "pretty.hpp"
 
+using namespace std;
 
 #define DEBUG_COLOR_RESET      "\033[0m"
 #define DEBUG_COLOR_YELLOW     "\033[33m"
@@ -29,6 +30,18 @@ int TableManager::insert_into(const string& table_name, const vector<string>& va
     if (values.size() != schema.columns.size()) {
         DEBUG_TABLE_MANAGER << "Insert failed: value count does not match schema" << std::endl;
         return -1;
+    }
+
+    // Primary Key Uniqueness check
+    if(schema.primary_key_idx != -1){
+        const string& pk_column = schema.columns[schema.primary_key_idx];
+        const string& pk_value = values[schema.primary_key_idx];
+
+        vector<int> existing = index_mgr.search(table_name, pk_column, pk_value);
+        if(!existing.empty()){
+            DEBUG_TABLE_MANAGER << "[ERROR] Duplicate entry for PRIMARY KEY: " << pk_value << endl;
+            return -1;
+        }
     }
 
     stringstream ss;
@@ -198,4 +211,45 @@ void TableManager::printTable(const std::string& tableName) {
     pretty::Printer printer;
     printer.frame(pretty::FrameStyle::Basic);
     std::cout << printer(table) << std::endl;
+}
+
+std::vector<string> TableManager::unpack_record(const Record& rec, const TableSchema& schema) {
+    DEBUG_TABLE_MANAGER << "unpack_record called for table: " << schema.table_name << std::endl;
+    string record_str = string(rec.data.begin(), rec.data.end());
+    DEBUG_TABLE_MANAGER << "Raw record string: " << record_str << std::endl;
+
+    stringstream ss(record_str);
+    string token;
+
+    // Skip table name
+    getline(ss, token, '|');
+
+    vector<string> fields;
+    while (getline(ss, token, '|')) {
+        fields.push_back(token);
+    }
+
+    if (fields.size() != schema.columns.size()) {
+        DEBUG_TABLE_MANAGER << "[WARN] unpacked field count mismatch: expected "
+                            << schema.columns.size() << ", got " << fields.size() << std::endl;
+    } else {
+        DEBUG_TABLE_MANAGER << "Unpacked fields: ";
+        for (const auto& f : fields) {
+            std::cout << "[" << f << "] ";
+        }
+        std::cout << std::endl;
+    }
+
+    return fields;
+}
+
+bool TableManager::create_table(const string& table_name, const vector<string>& columns, const vector<DataType>& types, int primary_key_idx){
+    if(!catalog.create_table(table_name, columns, types, primary_key_idx)){
+        return false;
+    }
+
+    const string& pk_column = columns[primary_key_idx];
+    index_mgr.create_index(table_name, pk_column);
+
+    return true;
 }

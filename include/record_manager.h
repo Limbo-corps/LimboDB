@@ -59,5 +59,4 @@ public:
     Record get_record(int record_id);
     void delete_record(int record_id);
     int update_record(int record_id, const Record& record);
-    
 };

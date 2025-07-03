@@ -5,6 +5,10 @@
 #include <vector>
 #include <set>
 #include "btree.h"
+#include <fstream>
+#include <filesystem>
+
+namespace fs = std::filesystem;
 
 using namespace std;
 
@@ -15,10 +19,14 @@ private:
 
     bool column_exists(const string& table_name, const string& column_name);
 
-public:
-    IndexManager() = default;
+    
+    public:
+    IndexManager();
     ~IndexManager();
-
+    
+    void save_indexes();
+    void load_indexes();
+    
     bool create_index(const string& table_name, const string& column_name);
     bool drop_index(const string& table_name, const string& column_name);
 

@@ -60,11 +60,17 @@ private:
 public:
     BPlusTree();
     ~BPlusTree();
+
+    
     
     void insert(const Key& key, const Value& value);
     vector<Value> search(const Key& key);
     vector<Value> range_search(const Key& start_key, const Key& end_key);
     void remove(const Key& key, const Value& value);
+
+    LeafNode* get_leftmost_leaf() const {
+        return leftmost_leaf;
+    }
 };
 
 // Implementation
