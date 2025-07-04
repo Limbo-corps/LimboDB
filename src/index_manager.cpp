@@ -1,6 +1,7 @@
 #include "../include/index_manager.h"
 #include <iostream>
 #include <algorithm>
+#include "../include/global-state.h" // Include global state
 
 using namespace std;
 
@@ -187,14 +188,21 @@ vector<int> IndexManager::range_search(const string& table_name, const string& c
     return result;
 }
 
+
+
 void IndexManager::save_indexes() {
-    DEBUG_INDEX_MANAGER("Saving indexes to disk...");
+    if (CURRENT_DATABASE.empty()) {
+        cerr << "[ERROR] No database selected. Cannot save indexes." << endl;
+        return;
+    }
 
-    fs::create_directory("indexes");
+    string dir = "data/" + CURRENT_DATABASE + "/indexes";
+    DEBUG_INDEX_MANAGER("Saving indexes to " << dir);
+    fs::create_directories(dir); // create database/indexes folder
 
-    for(const auto& [table_name, columns] : indexes){
-        for(const auto& [column_name, btree] : columns){
-            string filename = "indexes/" + table_name + "_" + column_name + ".idx";
+    for (const auto& [table_name, columns] : indexes) {
+        for (const auto& [column_name, btree] : columns) {
+            string filename = dir + "/" + table_name + "_" + column_name + ".idx";
             ofstream out(filename);
 
             if (!out.is_open()) {
@@ -203,14 +211,14 @@ void IndexManager::save_indexes() {
             }
 
             auto leaf = btree->get_leftmost_leaf();
-            while(leaf){
-                for(size_t i = 0; i < leaf->keys.size(); ++i){
-                    out<< leaf->keys[i] << "|";
-                    for(auto it = leaf->values[i].begin(); it != leaf->values[i].end(); ++it){
-                        if(it != leaf->values[i].begin()) out<< ",";
-                        out<<*it;
+            while (leaf) {
+                for (size_t i = 0; i < leaf->keys.size(); ++i) {
+                    out << leaf->keys[i] << "|";
+                    for (auto it = leaf->values[i].begin(); it != leaf->values[i].end(); ++it) {
+                        if (it != leaf->values[i].begin()) out << ",";
+                        out << *it;
                     }
-                    out<<"\n";
+                    out << "\n";
                 }
                 leaf = leaf->next;
             }
@@ -221,16 +229,24 @@ void IndexManager::save_indexes() {
     }
 }
 
-void IndexManager::load_indexes(){
-    DEBUG_INDEX_MANAGER("Loading Indexes from the disk...");
+void IndexManager::load_indexes() {
+    if (CURRENT_DATABASE.empty()) {
+        cerr << "[ERROR] No database selected. Cannot load indexes." << endl;
+        return;
+    }
 
-    if(!fs::exists("indexes")) return;
+    string dir = "data/" + CURRENT_DATABASE + "/indexes";
+    DEBUG_INDEX_MANAGER("Loading indexes from " << dir);
 
-    for(const auto& entry : fs::directory_iterator("indexes")){
+    if (!fs::exists(dir)) return;
+
+    for (const auto& entry : fs::directory_iterator(dir)) {
         string filename = entry.path().filename().string();
-        if(filename.size() >= 4 && filename.compare(filename.size() - 4, 4, ".idx") == 0){
+        if (filename.size() >= 4 && filename.compare(filename.size() - 4, 4, ".idx") == 0) {
             string name = filename.substr(0, filename.size() - 4);
             size_t pos = name.find('_');
+
+            if (pos == string::npos) continue;
 
             string table = name.substr(0, pos);
             string column = name.substr(pos + 1);

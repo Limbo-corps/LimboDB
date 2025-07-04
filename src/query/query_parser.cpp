@@ -3,6 +3,7 @@
 #include <iostream>
 #include <algorithm>
 #include "../../include/record_manager.h"
+#include "pretty.hpp"
 
 using namespace std;
 
@@ -425,88 +426,132 @@ bool QueryParser::parse_select(const std::string& query) {
     std::string query_lower = query;
     transform(query_lower.begin(), query_lower.end(), query_lower.begin(), ::tolower);
 
+    size_t pos_select = query_lower.find("select");
     size_t pos_from = query_lower.find("from");
-    if (pos_from == string::npos) {
-        cout << "[ERROR] Syntax error in SELECT: missing FROM." << endl;
+    if (pos_select == string::npos || pos_from == string::npos || pos_from <= pos_select + 6) {
+        cout << "[ERROR] Syntax error in SELECT: Missing or misplaced SELECT/FROM clause." << endl;
         return false;
     }
+
+    string select_clause = query.substr(pos_select + 6, pos_from - (pos_select + 6));
+    trim(select_clause);
 
     string after_from = query.substr(pos_from + 4);
     trim(after_from);
 
-    size_t pos_where = query_lower.substr(pos_from + 4).find("where");
+    size_t pos_where_global = query_lower.find("where", pos_from + 4);
     string table_name;
     string where_clause;
-    if (pos_where == string::npos) {
-        table_name = after_from;
-        if (!table_name.empty() && table_name.back() == ';') {
-            table_name.pop_back();
-        }
+
+    if (pos_where_global != string::npos) {
+        table_name = query.substr(pos_from + 4, pos_where_global - (pos_from + 4));
         trim(table_name);
-
-        vector<Record> records = table_manager.scan(table_name);
-        if (records.empty()) {
-            cout << "[INFO] No records found in '" << table_name << "'." << endl;
-            return true;
-        }
-
-        auto schema = catalog_manager.get_schema(table_name);
-        for (const auto& col : schema.columns) {
-            cout << col << "\t";
-        }
-        cout << endl;
-
-        for (const auto& rec : records) {
-            string rec_str(rec.data.begin(), rec.data.end());
-            vector<string> row = split(rec_str, '|');
-            for (const auto& val : row) {
-                cout << val << "\t";
-            }
-            cout << endl;
-        }
-        return true;
-    } else {
-        table_name = after_from.substr(0, pos_where);
-        trim(table_name);
-        where_clause = after_from.substr(pos_where + 5);
+        where_clause = query.substr(pos_where_global + 5);  // 5 = length of "where"
         trim(where_clause);
+        if (!where_clause.empty() && where_clause.back() == ';') where_clause.pop_back();
+    } else {
+        table_name = query.substr(pos_from + 4);
+        if (!table_name.empty() && table_name.back() == ';') table_name.pop_back();
+        trim(table_name);
+    }
 
-        if (!where_clause.empty() && where_clause.back() == ';') {
-            where_clause.pop_back();
+    TableSchema schema = catalog_manager.get_schema(table_name);
+    if (schema.table_name.empty()) {
+        cout << "[ERROR] Table '" << table_name << "' does not exist." << endl;
+        return false;
+    }
+
+    vector<string> selected_columns;
+    vector<int> selected_indices;
+
+    if (select_clause == "*") {
+        selected_columns = schema.columns;
+        for (int i = 0; i < schema.columns.size(); ++i) selected_indices.push_back(i);
+    } else {
+        selected_columns = split(select_clause, ',');
+        for (auto& col : selected_columns) trim(col);
+
+        for (const string& col : selected_columns) {
+            auto it = find(schema.columns.begin(), schema.columns.end(), col);
+            if (it == schema.columns.end()) {
+                cout << "[ERROR] Column '" << col << "' not found in table '" << table_name << "'" << endl;
+                return false;
+            }
+            selected_indices.push_back(it - schema.columns.begin());
         }
+    }
 
-        string prefix = "record_id =";
-        if (where_clause.find(prefix) != 0) {
-            cout << "[ERROR] SELECT only supports WHERE record_id = <id> for now." << endl;
+    vector<Record> results;
+    if (!where_clause.empty()) {
+        size_t eq_pos = where_clause.find('=');
+        if (eq_pos == string::npos) {
+            cout << "[ERROR] Invalid WHERE clause. Expected format: col = value" << endl;
             return false;
         }
 
-        string id_str = where_clause.substr(prefix.size());
-        trim(id_str);
+        string col = where_clause.substr(0, eq_pos);
+        string val = where_clause.substr(eq_pos + 1);
+        trim(col), trim(val);
 
-        int record_id = stoi(id_str);
-
-        Record rec = table_manager.select(table_name, record_id);
-        string rec_str(rec.data.begin(), rec.data.end());
-        vector<string> record = split(rec_str, '|');
-        if (record.empty()) {
-            cout << "[INFO] No record found with ID " << record_id << endl;
-            return true;
+        auto it = find(schema.columns.begin(), schema.columns.end(), col);
+        if (it == schema.columns.end()) {
+            cout << "[ERROR] Column '" << col << "' not found in table '" << table_name << "'" << endl;
+            return false;
         }
 
-        auto schema = catalog_manager.get_schema(table_name);
-        for (const auto& col : schema.columns) {
-            cout << col << "\t";
-        }
-        cout << endl;
+        int col_idx = it - schema.columns.begin();
 
-        for (const auto& val : record) {
-            cout << val << "\t";
+        vector<int> matching_ids = index_manager.search(table_name, col, val);
+        if (!matching_ids.empty()) {
+            for (int id : matching_ids) {
+                Record rec = table_manager.select(table_name, id);
+                string rec_str(rec.data.begin(), rec.data.end());
+                vector<string> row = split(rec_str, '|');
+                if (row.size() > col_idx && row[col_idx] == val) {
+                    results.push_back(rec);
+                }
+            }
+        } else {
+            for (const Record& rec : table_manager.scan(table_name)) {
+                string rec_str(rec.data.begin(), rec.data.end());
+                vector<string> row = split(rec_str, '|');
+                if (row.size() > col_idx && row[col_idx] == val) {
+                    results.push_back(rec);
+                }
+            }
         }
-        cout << endl;
-
-        return true;
+    } else {
+        results = table_manager.scan(table_name);
     }
+
+    // Output using pretty table
+    pretty::Table output_table;
+    output_table.add_row(selected_columns);
+
+    for (const Record& rec : results) {
+        string rec_str(rec.data.begin(), rec.data.end());
+        vector<string> row = split(rec_str, '|');
+
+        vector<string> selected_row;
+        for (int idx : selected_indices) {
+            if (idx < row.size()) selected_row.push_back(row[idx]);
+            else selected_row.push_back("");
+        }
+
+        output_table.add_row(selected_row);
+    }
+
+    if (results.empty()) {
+        vector<string> empty_row(selected_columns.size(), "");
+        empty_row[0] = "No matching records";
+        output_table.add_row(empty_row);
+    }
+
+    pretty::Printer printer;
+    printer.frame(pretty::FrameStyle::Basic);
+    cout << printer(output_table) << endl;
+
+    return true;
 }
 
 
@@ -514,7 +559,7 @@ void QueryParser::run_interactive() {
     std::string query;
     std::cout << "Enter SQL queries (type 'exit' to quit):\n";
     while (true) {
-        std::cout << "SQL> ";
+        std::cout << "lsql> ";
         std::getline(std::cin, query);
 
         if (query == "exit" || query == "quit") {
