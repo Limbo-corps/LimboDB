@@ -2,6 +2,35 @@ limboDB Command Reference
 
 ------------------------
 
+CREATE DATABASE
+Syntax:
+  CREATE DATABASE <database_name>
+
+Description:
+  Creates a new database
+Example:
+  CREATE DATABASE dbname
+
+------------------------
+
+SHOW DATABASES
+
+Description:
+  Shows all the available databases
+
+------------------------
+
+USE
+Syntax:
+  USE <database_name>
+
+Description:
+  Connects to a database or boots a database
+Example:
+  USE dbname
+
+------------------------
+
 CREATE TABLE
 Syntax:
   CREATE TABLE <table_name> (

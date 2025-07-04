@@ -12,6 +12,30 @@
 
 using namespace std;
 
+// Utility function to join a vector of strings with a delimiter
+static string join(const vector<string>& elements, char delimiter) {
+    if (elements.empty()) return "";
+    ostringstream os;
+    auto it = elements.begin();
+    os << *it;
+    ++it;
+    for (; it != elements.end(); ++it) {
+        os << delimiter << *it;
+    }
+    return os.str();
+}
+
+// Utility function to split a string by a delimiter
+static vector<string> split(const string& s, char delimiter) {
+    vector<string> tokens;
+    string token;
+    istringstream tokenStream(s);
+    while (getline(tokenStream, token, delimiter)) {
+        tokens.push_back(token);
+    }
+    return tokens;
+}
+
 #define DEBUG_COLOR_RESET      "\033[0m"
 #define DEBUG_COLOR_YELLOW     "\033[33m"
 #define DEBUG_COLOR_CYAN       "\033[36m"
@@ -142,7 +166,19 @@ bool TableManager::update(const string& table_name, int record_id, const vector<
 Record TableManager::select(const string& table_name, int record_id) {
     DEBUG_TABLE_MANAGER << "select called for table: " << table_name 
                          << ", record_id: " << record_id << std::endl;
-    return record_mgr.get_record(record_id);
+    
+    Record rec = record_mgr.get_record(record_id);
+    string rec_str(rec.data.begin(), rec.data.end());
+    vector<string> fields = split(rec_str, '|');
+
+    if (!fields.empty() && fields[0] == table_name) {
+        // Remove the first field (table name)
+        fields.erase(fields.begin());
+        string updated_data = join(fields, '|');
+        return Record(vector<char>(updated_data.begin(), updated_data.end()), rec.get_record_id());
+    }
+
+    return rec;
 }
 
 vector<Record> TableManager::scan(const string& table_name) {

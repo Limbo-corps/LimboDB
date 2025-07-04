@@ -25,8 +25,8 @@ bool QueryParser::execute_query(const std::string& query) {
         return parse_delete(query);
     } else if (q.find("update") == 0) {
         return parse_update(query);
-    } else if (q.find("select * from") == 0) {
-        return parse_print_table(query);
+    // } else if (q.find("select * from") == 0) {
+    //     return parse_print_table(query);
     } else if (q.find("select") == 0) {
         return parse_select(query);
     }
@@ -506,6 +506,7 @@ bool QueryParser::parse_select(const std::string& query) {
             for (int id : matching_ids) {
                 Record rec = table_manager.select(table_name, id);
                 string rec_str(rec.data.begin(), rec.data.end());
+                cout<<"[DEBUG]"<< rec_str<<endl;
                 vector<string> row = split(rec_str, '|');
                 if (row.size() > col_idx && row[col_idx] == val) {
                     results.push_back(rec);
@@ -514,6 +515,7 @@ bool QueryParser::parse_select(const std::string& query) {
         } else {
             for (const Record& rec : table_manager.scan(table_name)) {
                 string rec_str(rec.data.begin(), rec.data.end());
+                cout<<"[DEBUG]"<< rec_str<<endl;
                 vector<string> row = split(rec_str, '|');
                 if (row.size() > col_idx && row[col_idx] == val) {
                     results.push_back(rec);
