@@ -62,9 +62,19 @@ void run_sql_shell() {
 
         // SHOW DATABASES
         if (q_lower == "show databases;" || q_lower == "show databases") {
-            for (const auto& entry : fs::directory_iterator("data")) {
-                if (entry.is_directory()) {
-                    std::cout << entry.path().filename().string() << "\n";
+            const std::string data_path = "data";
+            if (!fs::exists(data_path)) {
+                std::cout << "[INFO] No databases found. 'data/' directory does not exist.\n";
+            } else {
+                bool any = false;
+                for (const auto& entry : fs::directory_iterator(data_path)) {
+                    if (entry.is_directory()) {
+                        std::cout << entry.path().filename().string() << "\n";
+                        any = true;
+                    }
+                }
+                if (!any) {
+                    std::cout << "[INFO] No databases found.\n";
                 }
             }
             continue;

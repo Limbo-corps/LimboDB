@@ -20,6 +20,19 @@ IndexManager::~IndexManager() {
     }
 }
 
+bool IndexManager::column_exists(const string& table_name, const string& column_name) {
+    DEBUG_INDEX_MANAGER("Checking if column '" << column_name << "' exists in table '" << table_name << "'");
+    auto table_it = indexes.find(table_name);
+    if (table_it == indexes.end()) {
+        DEBUG_INDEX_MANAGER("Table not found in indexes");
+        return false;
+    }
+    auto col_it = table_it->second.find(column_name);
+    bool exists = col_it != table_it->second.end();
+    DEBUG_INDEX_MANAGER("Column " << (exists ? "exists" : "does not exist"));
+    return exists;
+}
+
 // Create index
 bool IndexManager::create_index(const string& table_name, const string& column_name) {
     DEBUG_INDEX_MANAGER("Creating index on table '" << table_name << "', column '" << column_name << "'");

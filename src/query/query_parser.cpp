@@ -29,6 +29,8 @@ bool QueryParser::execute_query(const std::string& query) {
     //     return parse_print_table(query);
     } else if (q.find("select") == 0) {
         return parse_select(query);
+    } else if(q.find("create index on ") == 0){
+        return parse_create_index(query);
     }
 
     cout << "[ERROR] Unsupported or invalid query." << endl;
@@ -421,7 +423,6 @@ bool QueryParser::parse_update(const std::string& query) {
 
     return any_success;
 }
-
 bool QueryParser::parse_select(const std::string& query) {
     std::string query_lower = query;
     transform(query_lower.begin(), query_lower.end(), query_lower.begin(), ::tolower);
@@ -483,45 +484,7 @@ bool QueryParser::parse_select(const std::string& query) {
 
     vector<Record> results;
     if (!where_clause.empty()) {
-        size_t eq_pos = where_clause.find('=');
-        if (eq_pos == string::npos) {
-            cout << "[ERROR] Invalid WHERE clause. Expected format: col = value" << endl;
-            return false;
-        }
-
-        string col = where_clause.substr(0, eq_pos);
-        string val = where_clause.substr(eq_pos + 1);
-        trim(col), trim(val);
-
-        auto it = find(schema.columns.begin(), schema.columns.end(), col);
-        if (it == schema.columns.end()) {
-            cout << "[ERROR] Column '" << col << "' not found in table '" << table_name << "'" << endl;
-            return false;
-        }
-
-        int col_idx = it - schema.columns.begin();
-
-        vector<int> matching_ids = index_manager.search(table_name, col, val);
-        if (!matching_ids.empty()) {
-            for (int id : matching_ids) {
-                Record rec = table_manager.select(table_name, id);
-                string rec_str(rec.data.begin(), rec.data.end());
-                cout<<"[DEBUG]"<< rec_str<<endl;
-                vector<string> row = split(rec_str, '|');
-                if (row.size() > col_idx && row[col_idx] == val) {
-                    results.push_back(rec);
-                }
-            }
-        } else {
-            for (const Record& rec : table_manager.scan(table_name)) {
-                string rec_str(rec.data.begin(), rec.data.end());
-                cout<<"[DEBUG]"<< rec_str<<endl;
-                vector<string> row = split(rec_str, '|');
-                if (row.size() > col_idx && row[col_idx] == val) {
-                    results.push_back(rec);
-                }
-            }
-        }
+        results = where_clause_handler(where_clause, schema, table_name);
     } else {
         results = table_manager.scan(table_name);
     }
@@ -601,4 +564,350 @@ bool QueryParser::parse_print_table(const std::string& query) {
     
     table_manager.printTable(tableName);
     return true;
+}
+
+bool QueryParser::parse_create_index(const std::string& query){
+    string query_lower = query;
+    transform(query_lower.begin(), query_lower.end(), query_lower.begin(), ::tolower);
+
+    size_t on_pos = query_lower.find("on");
+    if(on_pos == string::npos){
+        std::cout << "[ERROR] Syntax error in CREATE INDEX query." << std::endl;
+        return false;
+    }
+
+    string after_on = query.substr(on_pos + 2);
+    trim(after_on);
+
+    size_t paren_start = after_on.find('(');
+    size_t paren_end = after_on.find(')');
+
+    if (paren_start == std::string::npos || paren_end == std::string::npos || paren_end <= paren_start) {
+        std::cout << "[ERROR] Expected format: CREATE INDEX ON table(column);" << std::endl;
+        return false;
+    }
+
+    std::string table = after_on.substr(0, paren_start);
+    std::string column = after_on.substr(paren_start + 1, paren_end - paren_start - 1);
+    trim(table);
+    trim(column);
+
+    if (!catalog_manager.column_exists(table, column)) {
+        std::cout << "[ERROR] Column '" << column << "' does not exist in table '" << table << "'\n";
+        return false;
+    }
+
+    if (index_manager.create_index(table, column)) {
+        std::cout << "[INFO] Index created on " << table << "(" << column << ")\n";
+        return true;
+    } else {
+        std::cout << "[ERROR] Failed to create index.\n";
+        return false;
+    }
+}
+
+// Defined Equation handler
+
+#define DEBUG_COLOR_RESET  "\033[0m"
+#define DEBUG_COLOR_RED    "\033[31m"
+#define DEBUG_COLOR_GREEN  "\033[32m"
+#define DEBUG_COLOR_YELLOW "\033[33m"
+#define DEBUG_ERROR_LABEL       DEBUG_COLOR_RED "[ERROR]" DEBUG_COLOR_RESET
+#define DEBUG_SUCCESS_LABEL     DEBUG_COLOR_GREEN "[SUCCESS]" DEBUG_COLOR_RESET
+#define DEBUG_LABEL             DEBUG_COLOR_YELLOW "[DEBUG]" DEBUG_COLOR_RESET
+#define DEBUG_EQHANDLER         DEBUG_COLOR_YELLOW "[EQHANDLER]" DEBUG_COLOR_RESET
+#define DEBUG_ERROR             std::cout << DEBUG_ERROR_LABEL << DEBUG_EQHANDLER << " "
+#define DEBUG_SUCCESS           std::cout << DEBUG_SUCCESS_LABEL << DEBUG_EQHANDLER << " "
+#define DEBUG                   std::cout << DEBUG_LABEL << DEBUG_EQHANDLER << " "
+
+vector<Record> QueryParser::where_clause_handler(const std::string& where_clause,const TableSchema& schema, const string& table_name) {
+    // Priority order matters to avoid splitting at '=' before checking '>=' or '<='
+    if (where_clause.find(">=") != string::npos) {
+        return handle_greater_equal(where_clause, schema, table_name);
+    } else if (where_clause.find("<=") != string::npos) {
+        return handle_lesser_equal(where_clause, schema, table_name);
+    } else if (where_clause.find("!=") != string::npos) {
+        return handle_not_equal(where_clause, schema, table_name);
+    } else if (where_clause.find('=') != string::npos) {
+        return handle_equal(where_clause, schema, table_name);
+    } else if (where_clause.find('>') != string::npos) {
+        return handle_greater(where_clause, schema, table_name);
+    } else if (where_clause.find('<') != string::npos) {
+        return handle_lesser(where_clause, schema, table_name);
+    } else {
+        DEBUG_ERROR << "Unsupported or malformed WHERE clause: " << where_clause << std::endl;
+        return {};
+    }
+}
+
+
+vector<Record> QueryParser::handle_equal(const std::string& where_clause,const TableSchema& schema, const string& table_name){
+    size_t op_pos = where_clause.find("=");
+    vector<Record> results;
+
+    if(op_pos == string::npos){
+        DEBUG_ERROR << "Expected operator '=' not found in the WHERE clause." << std::endl;
+        return {};
+    }
+
+    string col = where_clause.substr(0, op_pos);
+    string val = where_clause.substr(op_pos + 1);
+    trim(col), trim(val);
+
+    auto it = find(schema.columns.begin(), schema.columns.end(), col);
+    if(it == schema.columns.end()) {
+        DEBUG_ERROR << "Column '"<<col<< "' not found in the table '"<< table_name << endl;
+        return {};
+    }
+
+    int col_idx = it - schema.columns.begin();
+
+    vector<int> matching_ids = index_manager.search(table_name, col, val);
+    if(matching_ids.empty()){
+        DEBUG_ERROR << "No Matching ids found for " << col << " = " << val << " in the table '" << table_name << "'" << endl;
+        return {};
+    }
+
+    for(int id : matching_ids){
+        Record rec = table_manager.select(table_name, id);
+        string rec_str(rec.data.begin(), rec.data.end());
+        vector<string> row = split(rec_str, '|');
+        if(row.size() > col_idx && row[col_idx] == val){
+            results.push_back(rec);
+        }
+    }
+
+    if (!results.empty()) {
+        DEBUG_SUCCESS << "Found " << results.size() << " record(s) for " << col << " = " << val << " in table '" << table_name << "'" << std::endl;
+    }
+    return results;
+}
+
+vector<Record> QueryParser::handle_not_equal(const std::string& where_clause, const TableSchema& schema, const string& table_name) {
+    size_t op_pos = where_clause.find("!=");
+    vector<Record> results;
+
+    if(op_pos == string::npos){
+        DEBUG_ERROR << "Expected operator '!=' not found in the WHERE clause." << std::endl;
+        return {};
+    }
+
+    string col = where_clause.substr(0, op_pos);
+    string val = where_clause.substr(op_pos + 2); // Skip "!="
+    trim(col), trim(val);
+
+    auto it = find(schema.columns.begin(), schema.columns.end(), col);
+    if (it == schema.columns.end()) {
+        DEBUG_ERROR << "Column '" << col << "' not found in table '" << table_name << "'" << std::endl;
+        return {};
+    }
+
+    int col_idx = it - schema.columns.begin();
+
+    // If index exists, use two range searches
+    vector<int> matching_ids;
+    if (index_manager.column_exists(table_name, col)) {
+        vector<int> less_than = index_manager.range_search(table_name, col, "", val);     // col < val
+        vector<int> greater_than = index_manager.range_search(table_name, col, val + '\1', "~"); // col > val ('~' is high ASCII)
+
+        matching_ids.insert(matching_ids.end(), less_than.begin(), less_than.end());
+        matching_ids.insert(matching_ids.end(), greater_than.begin(), greater_than.end());
+    } else {
+        // Fallback to full scan if no index
+        for (const Record& rec : table_manager.scan(table_name)) {
+            string rec_str(rec.data.begin(), rec.data.end());
+            vector<string> row = split(rec_str, '|');
+            if (row.size() > col_idx && row[col_idx] != val) {
+                results.push_back(rec);
+            }
+        }
+        if (!results.empty()) {
+            DEBUG_SUCCESS << "Found " << results.size() << " record(s) for " << col << " != " << val << " in table '" << table_name << "'" << std::endl;
+        }
+        return results;
+    }
+
+    // Fetch and filter records by checking column != value
+    for (int id : matching_ids) {
+        Record rec = table_manager.select(table_name, id);
+        string rec_str(rec.data.begin(), rec.data.end());
+        vector<string> row = split(rec_str, '|');
+        if (row.size() > col_idx && row[col_idx] != val) {
+            results.push_back(rec);
+        }
+    }
+
+    if (!results.empty()) {
+        DEBUG_SUCCESS << "Found " << results.size() << " record(s) for " << col << " != " << val << " in table '" << table_name << "'" << std::endl;
+    }
+    return results;
+}
+
+vector<Record> QueryParser::handle_greater(const std::string& where_clause, const TableSchema& schema, const string& table_name){
+    size_t op_pos = where_clause.find(">");
+    vector<Record> results;
+
+    if(op_pos == string::npos){
+        DEBUG_ERROR << "Expected operator '>' not found in the WHERE clause." << std::endl;
+        return {};
+    }
+
+    string col = where_clause.substr(0, op_pos);
+    string val = where_clause.substr(op_pos+1);
+    trim(col), trim(val);
+
+    auto it = find(schema.columns.begin(), schema.columns.end(), col);
+    if (it == schema.columns.end()) {
+        DEBUG_ERROR << "Column '" << col << "' not found in table '" << table_name << "'" << std::endl;
+        return {};
+    }
+
+    int col_idx = it - schema.columns.begin();
+
+    //if Index exists use range search
+    vector<int> matching_ids;
+    if(index_manager.column_exists(table_name, col)){
+        matching_ids = index_manager.range_search(table_name, col, val + '\1', "~");
+    } else {
+        DEBUG_ERROR << "Column '" << col << "' does not exist in the indices"<<endl;
+    }
+
+    for(int id : matching_ids){
+        Record rec = table_manager.select(table_name, id);
+        string rec_str(rec.data.begin(), rec.data.end());
+        vector<string> row = split(rec_str, '|');
+        if (row.size() > col_idx && row[col_idx] > val) {
+            results.push_back(rec);
+        }
+    }
+    if (!results.empty()) {
+        DEBUG_SUCCESS << "Found " << results.size() << " record(s) for " << col << " > " << val << " in table '" << table_name << "'" << std::endl;
+    }
+    return results;
+}
+
+vector<Record> QueryParser::handle_lesser(const std::string& where_clause, const TableSchema& schema, const string& table_name) {
+    size_t op_pos = where_clause.find("<");
+    vector<Record> results;
+
+    if(op_pos == string::npos){
+        DEBUG_ERROR << "Expected operator '<' not found in the WHERE clause." << std::endl;
+        return {};
+    }
+
+    string col = where_clause.substr(0, op_pos);
+    string val = where_clause.substr(op_pos+1);
+    trim(col), trim(val);
+
+    auto it = find(schema.columns.begin(), schema.columns.end(), col);
+    if (it == schema.columns.end()) {
+        DEBUG_ERROR << "Column '" << col << "' not found in table '" << table_name << "'" << std::endl;
+        return {};
+    }
+
+    int col_idx = it - schema.columns.begin();
+
+    vector<int> matching_ids;
+    if(index_manager.column_exists(table_name, col)){
+        matching_ids = index_manager.range_search(table_name, col, "", val);
+    } else {
+        DEBUG_ERROR << "Column '" << col << "' does not exist in the indices" << endl;
+    }
+
+    for(int id : matching_ids){
+        Record rec = table_manager.select(table_name, id);
+        string rec_str(rec.data.begin(), rec.data.end());
+        vector<string> row = split(rec_str, '|');
+        if (row.size() > col_idx && row[col_idx] < val) {
+            results.push_back(rec);
+        }
+    }
+    if (!results.empty()) {
+        DEBUG_SUCCESS << "Found " << results.size() << " record(s) for " << col << " < " << val << " in table '" << table_name << "'" << std::endl;
+    }
+    return results;
+}
+
+vector<Record> QueryParser::handle_greater_equal(const std::string& where_clause, const TableSchema& schema, const string& table_name) {
+    size_t op_pos = where_clause.find(">=");
+    vector<Record> results;
+
+    if(op_pos == string::npos){
+        DEBUG_ERROR << "Expected operator '>=' not found in the WHERE clause." << std::endl;
+        return {};
+    }
+
+    string col = where_clause.substr(0, op_pos);
+    string val = where_clause.substr(op_pos+2);
+    trim(col), trim(val);
+
+    auto it = find(schema.columns.begin(), schema.columns.end(), col);
+    if (it == schema.columns.end()) {
+        DEBUG_ERROR << "Column '" << col << "' not found in table '" << table_name << "'" << std::endl;
+        return {};
+    }
+
+    int col_idx = it - schema.columns.begin();
+
+    vector<int> matching_ids;
+    if(index_manager.column_exists(table_name, col)){
+        matching_ids = index_manager.range_search(table_name, col, val, "~");
+    } else {
+        DEBUG_ERROR << "Column '" << col << "' does not exist in the indices" << endl;
+    }
+
+    for(int id : matching_ids){
+        Record rec = table_manager.select(table_name, id);
+        string rec_str(rec.data.begin(), rec.data.end());
+        vector<string> row = split(rec_str, '|');
+        if (row.size() > col_idx && row[col_idx] >= val) {
+            results.push_back(rec);
+        }
+    }
+    if (!results.empty()) {
+        DEBUG_SUCCESS << "Found " << results.size() << " record(s) for " << col << " >= " << val << " in table '" << table_name << "'" << std::endl;
+    }
+    return results;
+}
+
+vector<Record> QueryParser::handle_lesser_equal(const std::string& where_clause, const TableSchema& schema, const string& table_name) {
+    size_t op_pos = where_clause.find("<=");
+    vector<Record> results;
+
+    if(op_pos == string::npos){
+        DEBUG_ERROR << "Expected operator '<=' not found in the WHERE clause." << std::endl;
+        return {};
+    }
+
+    string col = where_clause.substr(0, op_pos);
+    string val = where_clause.substr(op_pos+2);
+    trim(col), trim(val);
+
+    auto it = find(schema.columns.begin(), schema.columns.end(), col);
+    if (it == schema.columns.end()) {
+        DEBUG_ERROR << "Column '" << col << "' not found in table '" << table_name << "'" << std::endl;
+        return {};
+    }
+
+    int col_idx = it - schema.columns.begin();
+
+    vector<int> matching_ids;
+    if(index_manager.column_exists(table_name, col)){
+        matching_ids = index_manager.range_search(table_name, col, "", val + '\1');
+    } else {
+        DEBUG_ERROR << "Column '" << col << "' does not exist in the indices" << endl;
+    }
+
+    for(int id : matching_ids){
+        Record rec = table_manager.select(table_name, id);
+        string rec_str(rec.data.begin(), rec.data.end());
+        vector<string> row = split(rec_str, '|');
+        if (row.size() > col_idx && row[col_idx] <= val) {
+            results.push_back(rec);
+        }
+    }
+    if (!results.empty()) {
+        DEBUG_SUCCESS << "Found " << results.size() << " record(s) for " << col << " <= " << val << " in table '" << table_name << "'" << std::endl;
+    }
+    return results;
 }

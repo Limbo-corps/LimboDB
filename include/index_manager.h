@@ -17,10 +17,9 @@ private:
     // table -> column -> BPlusTree<string, set<int>>
     unordered_map<string, unordered_map<string, BPlusTree<string, set<int>>*>> indexes;
 
+public:
     bool column_exists(const string& table_name, const string& column_name);
 
-    
-    public:
     IndexManager();
     ~IndexManager();
     

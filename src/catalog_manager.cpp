@@ -215,14 +215,23 @@ bool CatalogManager::drop_table(const std::string& table_name) {
         return false;
     }
 
+    // Delete all index files and memory trees for this table
+    for (const std::string& col : schema.columns) {
+        if (index_manager.column_exists(norm_table, col)) {
+            index_manager.drop_index(norm_table, col);
+            DEBUG_CATALOG("Dropped index for column '" << col << "' in table '" << norm_table << "'");
+        }
+    }
+
     TableManager tm(*this, record_manager, index_manager);
     int deleted = tm.delete_from(norm_table, -1);
     DEBUG_CATALOG("Deleted " << deleted << " data records from table '" << norm_table << "'");
 
     schema_cache.erase(norm_table);
-    DEBUG_CATALOG("Table '" << norm_table << "' dropped from cache (record data remains)");
+    DEBUG_CATALOG("Table '" << norm_table << "' dropped from cache");
     return true;
 }
+
 
 TableSchema CatalogManager::get_schema(const std::string& table_name) {
     std::string norm_table = normalize_identifier(table_name);

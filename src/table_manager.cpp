@@ -48,6 +48,11 @@ TableManager::TableManager(CatalogManager& cat, RecordManager& rm, IndexManager&
     DEBUG_TABLE_MANAGER << "Initialized TableManager with IndexManager" << std::endl;
 }
 
+bool TableManager::column_exists(const string& table_name, const string& column_name) {
+    TableSchema schema = catalog.get_schema(table_name);
+    return find(schema.columns.begin(), schema.columns.end(), column_name) != schema.columns.end();
+}
+
 int TableManager::insert_into(const string& table_name, const vector<string>& values) {
     DEBUG_TABLE_MANAGER << "insert_into called for table: " << table_name << std::endl;
     TableSchema schema = catalog.get_schema(table_name);

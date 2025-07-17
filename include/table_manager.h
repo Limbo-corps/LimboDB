@@ -18,6 +18,8 @@ public:
     TableManager(CatalogManager& cat, RecordManager& rm, IndexManager& im);
 
     bool create_table(const string& table_name, const vector<string>& columns, const vector<DataType>& types, int primary_key_idx);
+
+    bool column_exists(const string& table_name, const string& column_name);
     
     int insert_into(const string& table_name, const vector<string>& values);
     bool delete_from(const string& table_name, int record_id);
