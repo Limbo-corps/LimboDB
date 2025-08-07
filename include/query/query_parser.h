@@ -1,4 +1,3 @@
-
 #ifndef QUERY_PARSER_H
 #define QUERY_PARSER_H
 
@@ -40,6 +39,9 @@ public:
     static std::vector<std::string> split(const std::string& s, char delimiter);
 private:
     vector<Record> where_clause_handler(const std::string& where_clause, const TableSchema& schema, const string& table_name);
+
+    vector<Record> intersect_records(const vector<Record>& a, const vector<Record>& b);
+    vector<Record> union_records(const vector<Record>& a, const vector<Record>& b);
 
     vector<Record> handle_not_equal(const std::string& where_clause, const TableSchema& schema, const string& table_name);
     vector<Record> handle_equal(const std::string& where_clause, const TableSchema& schema, const string& table_name);

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include "../../include/record_manager.h"
 #include "pretty.hpp"
+#include <unordered_set>
 
 using namespace std;
 
@@ -423,6 +424,7 @@ bool QueryParser::parse_update(const std::string& query) {
 
     return any_success;
 }
+
 bool QueryParser::parse_select(const std::string& query) {
     std::string query_lower = query;
     transform(query_lower.begin(), query_lower.end(), query_lower.begin(), ::tolower);
@@ -620,24 +622,82 @@ bool QueryParser::parse_create_index(const std::string& query){
 #define DEBUG_SUCCESS           std::cout << DEBUG_SUCCESS_LABEL << DEBUG_EQHANDLER << " "
 #define DEBUG                   std::cout << DEBUG_LABEL << DEBUG_EQHANDLER << " "
 
-vector<Record> QueryParser::where_clause_handler(const std::string& where_clause,const TableSchema& schema, const string& table_name) {
-    // Priority order matters to avoid splitting at '=' before checking '>=' or '<='
-    if (where_clause.find(">=") != string::npos) {
-        return handle_greater_equal(where_clause, schema, table_name);
-    } else if (where_clause.find("<=") != string::npos) {
-        return handle_lesser_equal(where_clause, schema, table_name);
-    } else if (where_clause.find("!=") != string::npos) {
-        return handle_not_equal(where_clause, schema, table_name);
-    } else if (where_clause.find('=') != string::npos) {
-        return handle_equal(where_clause, schema, table_name);
-    } else if (where_clause.find('>') != string::npos) {
-        return handle_greater(where_clause, schema, table_name);
-    } else if (where_clause.find('<') != string::npos) {
-        return handle_lesser(where_clause, schema, table_name);
+vector<Record> QueryParser::where_clause_handler(const std::string& where_clause, const TableSchema& schema, const string& table_name) {
+    string clause = where_clause;
+    trim(clause);
+
+    // Handle OR first because it has lower precedence than AND
+    size_t or_pos = clause.find(" OR ");
+    if (or_pos != string::npos) {
+        string left = clause.substr(0, or_pos);
+        string right = clause.substr(or_pos + 4);
+        auto left_result = where_clause_handler(left, schema, table_name);
+        auto right_result = where_clause_handler(right, schema, table_name);
+        return union_records(left_result, right_result);
+    }
+
+    // Handle AND next
+    size_t and_pos = clause.find(" AND ");
+    if (and_pos != string::npos) {
+        string left = clause.substr(0, and_pos);
+        string right = clause.substr(and_pos + 5);
+        auto left_result = where_clause_handler(left, schema, table_name);
+        auto right_result = where_clause_handler(right, schema, table_name);
+        return intersect_records(left_result, right_result);
+    }
+
+    // Handle basic comparisons
+    if (clause.find(">=") != string::npos) {
+        return handle_greater_equal(clause, schema, table_name);
+    } else if (clause.find("<=") != string::npos) {
+        return handle_lesser_equal(clause, schema, table_name);
+    } else if (clause.find("!=") != string::npos) {
+        return handle_not_equal(clause, schema, table_name);
+    } else if (clause.find('=') != string::npos) {
+        return handle_equal(clause, schema, table_name);
+    } else if (clause.find('>') != string::npos) {
+        return handle_greater(clause, schema, table_name);
+    } else if (clause.find('<') != string::npos) {
+        return handle_lesser(clause, schema, table_name);
     } else {
-        DEBUG_ERROR << "Unsupported or malformed WHERE clause: " << where_clause << std::endl;
+        DEBUG_ERROR << "Unsupported or malformed WHERE clause: " << clause << std::endl;
         return {};
     }
+}
+
+vector<Record> QueryParser::intersect_records(const vector<Record>& a, const vector<Record>& b) {
+    unordered_set<string> keys_b;
+    for (const auto& rec : b) {
+        keys_b.insert(string(rec.data.begin(), rec.data.end()));
+    }
+
+    vector<Record> result;
+    for (const auto& rec : a) {
+        string rec_str(rec.data.begin(), rec.data.end());
+        if (keys_b.count(rec_str)) {
+            result.push_back(rec);
+        }
+    }
+    return result;
+}
+
+vector<Record> QueryParser::union_records(const vector<Record>& a, const vector<Record>& b) {
+    unordered_set<string> seen;
+    vector<Record> result;
+
+    for (const auto& rec : a) {
+        string rec_str(rec.data.begin(), rec.data.end());
+        if (seen.insert(rec_str).second) {
+            result.push_back(rec);
+        }
+    }
+    for (const auto& rec : b) {
+        string rec_str(rec.data.begin(), rec.data.end());
+        if (seen.insert(rec_str).second) {
+            result.push_back(rec);
+        }
+    }
+    return result;
 }
 
 
